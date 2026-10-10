@@ -138,21 +138,25 @@ struct PracticeSession: Equatable {
 final class ShortcutPractice: ObservableObject {
     @Published private(set) var session: PracticeSession?
     private var completion: DispatchWorkItem?
+    var onChange: (() -> Void)?
+    var isBlocking: Bool { session.map { !$0.waitingForRelease && !$0.succeeded } ?? false }
 
     @discardableResult func begin(_ shortcut: Shortcut, isListening: Bool, modifiers: Set<ModifierKey>, keys: [String]) -> Bool {
         guard isListening, !shortcut.resolvedCombinations.isEmpty else { return false }
         cancel()
         session = PracticeSession(shortcut: shortcut, waitingForRelease: !modifiers.isEmpty || !keys.isEmpty)
+        onChange?()
         return true
     }
     func reconcile(modifiers: Set<ModifierKey>, keys: [String]) {
         guard var current = session else { return }
         current.reconcile(modifiers: modifiers, keys: keys)
-        if current != session { session = current }
+        if current != session { session = current; onChange?() }
     }
     func receive(_ press: ShortcutKeyPress) {
         guard var current = session, current.receive(press) else { return }
         session = current
+        onChange?()
         let work = DispatchWorkItem { [weak self] in self?.cancel() }
         completion = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
@@ -161,7 +165,11 @@ final class ShortcutPractice: ObservableObject {
         guard let current = session else { return }
         if !isListening || !content.shortcuts.contains(current.shortcut) || !current.shortcut.applies(to: context.bundleIdentifier) { cancel() }
     }
-    func cancel() { completion?.cancel(); completion = nil; session = nil }
+    func cancel() {
+        completion?.cancel(); completion = nil
+        guard session != nil else { return }
+        session = nil; onChange?()
+    }
 }
 
 enum KeyboardReference: String, CaseIterable {

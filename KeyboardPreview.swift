@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 
 enum ModifierKey: String, CaseIterable, Identifiable, Codable {
@@ -73,12 +74,41 @@ struct ShortcutPreview {
     }
 }
 
+struct PracticeEventFilter {
+    private(set) var consumedKeys: Set<UInt16> = []
+    private var drainingModifiers = false
+
+    mutating func consumes(_ type: CGEventType, code: UInt16, modifiers: Set<ModifierKey>, blocking: Bool) -> Bool {
+        switch type {
+        case .keyDown:
+            if blocking { consumedKeys.insert(code) }
+            return consumedKeys.contains(code)
+        case .keyUp:
+            return consumedKeys.remove(code) != nil
+        case .flagsChanged:
+            let consume = blocking || drainingModifiers
+            if consume { drainingModifiers = !modifiers.isEmpty }
+            return consume
+        default:
+            return false
+        }
+    }
+    mutating func reconcile(heldCodes: Set<UInt16>, modifiers: Set<ModifierKey>) {
+        consumedKeys.formIntersection(heldCodes)
+        if modifiers.isEmpty { drainingModifiers = false }
+    }
+}
+
 final class KeyboardPreview: ObservableObject {
     @Published private(set) var modifiers: Set<ModifierKey> = []
     @Published private(set) var keys: [String] = []
     @Published private(set) var hasInputPermission = false
+    @Published private(set) var hasAccessibilityPermission = false
     @Published private(set) var isListening = false
+    @Published private(set) var canIntercept = false
     private var preview = ShortcutPreview()
+    private var filter = PracticeEventFilter()
+    private var requestedInterception = false
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var modifierTimer: Timer?
@@ -86,6 +116,8 @@ final class KeyboardPreview: ObservableObject {
     var onStatusChange: (() -> Void)?
     var onStateChange: (() -> Void)?
     var onKeyDown: ((ShortcutKeyPress) -> Void)?
+    var shouldBlock: (() -> Bool)?
+    var onCancelPractice: (() -> Void)?
     var combination: [String] { preview.combination(modifiers: modifiers) }
 
     func start() {
@@ -104,41 +136,75 @@ final class KeyboardPreview: ObservableObject {
             NSWorkspace.shared.open(url)
         }
     }
+    func requestInterceptionPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        AXIsProcessTrustedWithOptions(options)
+        if hasAccessibilityPermission && !canIntercept { removeTap() }
+        updatePermission()
+        if !hasAccessibilityPermission,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
     private func pollModifiers() {
         let previousModifiers = modifiers
         let previousKeys = keys
-        let current = ModifierKey.live(sessionFlags: NSEvent.modifierFlags,
-                                       functionKeyDown: hasInputPermission && CGEventSource.keyState(.combinedSessionState, key: 63))
+        let flags = canIntercept ? NSEvent.ModifierFlags(rawValue: UInt(CGEventSource.flagsState(.hidSystemState).rawValue)) : NSEvent.modifierFlags
+        let current = ModifierKey.live(sessionFlags: flags,
+                                       functionKeyDown: hasInputPermission && CGEventSource.keyState(.hidSystemState, key: 63))
         if current != modifiers { modifiers = current }
         if hasInputPermission && !keys.isEmpty {
             // Some apps consume shortcut key-up events. Reconcile only held
             // keys so that the preview still clears when those keys are released.
-            for code in preview.heldOrder where !CGEventSource.keyState(.combinedSessionState, key: code) {
+            for code in preview.heldOrder where !CGEventSource.keyState(.hidSystemState, key: code) {
                 preview.keyUp(code: code)
             }
             if keys != preview.keyLabels { keys = preview.keyLabels }
         }
+        let heldCodes = Set(filter.consumedKeys.filter { CGEventSource.keyState(.hidSystemState, key: $0) })
+        filter.reconcile(heldCodes: heldCodes, modifiers: current)
         if previousModifiers != modifiers || previousKeys != keys { onStateChange?() }
     }
     private func updatePermission() {
         let permitted = CGPreflightListenEventAccess()
         let previousPermission = hasInputPermission
         let previousListening = isListening
+        let previousAccessibility = hasAccessibilityPermission
+        let previousInterception = canIntercept
         hasInputPermission = permitted
-        if permitted && tap == nil { installTap() }
+        hasAccessibilityPermission = AXIsProcessTrusted()
+        if tap != nil && requestedInterception != hasAccessibilityPermission { removeTap() }
+        if permitted && tap == nil { installTap(intercept: hasAccessibilityPermission) }
         if !permitted && tap != nil { removeTap() }
-        if previousPermission != hasInputPermission || previousListening != isListening { onStatusChange?() }
+        if previousPermission != hasInputPermission || previousListening != isListening || previousAccessibility != hasAccessibilityPermission || previousInterception != canIntercept { onStatusChange?() }
     }
-    private func installTap() {
+    private func installTap(intercept: Bool) {
         let mask = CGEventMask((1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue))
-        tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly, eventsOfInterest: mask, callback: { _, type, event, pointer in
+        let callback: CGEventTapCallBack = { _, type, event, pointer in
             guard let pointer = pointer else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<KeyboardPreview>.fromOpaque(pointer).takeUnretainedValue()
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                monitor.onCancelPractice?()
+                monitor.filter = PracticeEventFilter()
                 if let tap = monitor.tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            } else { monitor.receive(type: type, event: event) }
-            return Unmanaged.passUnretained(event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque())
+                return Unmanaged.passUnretained(event)
+            }
+            let blocking = monitor.canIntercept && (monitor.shouldBlock?() ?? false)
+            let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            let pressed = ModifierKey.pressed(in: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)))
+            let consumed = monitor.canIntercept && monitor.filter.consumes(type, code: code, modifiers: pressed, blocking: blocking)
+            monitor.receive(type: type, event: event)
+            if blocking && type == .keyDown && code == 53 && (monitor.shouldBlock?() ?? false) { monitor.onCancelPractice?() }
+            return consumed ? nil : Unmanaged.passUnretained(event)
+        }
+        requestedInterception = intercept
+        tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: intercept ? .defaultTap : .listenOnly,
+                               eventsOfInterest: mask, callback: callback, userInfo: Unmanaged.passUnretained(self).toOpaque())
+        canIntercept = intercept && tap != nil
+        if tap == nil && intercept {
+            tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+                                   eventsOfInterest: mask, callback: callback, userInfo: Unmanaged.passUnretained(self).toOpaque())
+        }
         guard let tap = tap else { isListening = false; return }
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         if let source = runLoopSource { CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes) }
@@ -149,6 +215,7 @@ final class KeyboardPreview: ObservableObject {
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let tap = tap { CFMachPortInvalidate(tap) }
         tap = nil; runLoopSource = nil; isListening = false
+        canIntercept = false; filter = PracticeEventFilter()
         preview.releaseAll(); keys = []
         onStateChange?()
     }
@@ -157,8 +224,9 @@ final class KeyboardPreview: ObservableObject {
         if type == .keyUp { preview.keyUp(code: code); keys = preview.keyLabels; onStateChange?(); return }
         if type == .flagsChanged { pollModifiers(); return }
         guard type == .keyDown, let native = NSEvent(cgEvent: event) else { return }
-        let pressed = ModifierKey.keyEvent(eventFlags: native.modifierFlags, sessionFlags: NSEvent.modifierFlags,
-                                          functionKeyDown: CGEventSource.keyState(.combinedSessionState, key: 63))
+        let flags = canIntercept ? NSEvent.ModifierFlags(rawValue: UInt(CGEventSource.flagsState(.hidSystemState).rawValue)) : NSEvent.modifierFlags
+        let pressed = ModifierKey.keyEvent(eventFlags: native.modifierFlags, sessionFlags: flags,
+                                          functionKeyDown: CGEventSource.keyState(.hidSystemState, key: 63))
         let label = Self.keyLabel(native)
         preview.keyDown(code: code, label: label)
         if modifiers != pressed { modifiers = pressed }

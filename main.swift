@@ -59,7 +59,9 @@ struct Widget: View {
                             }
                             let available = keyboard.isListening && !shortcut.resolvedCombinations.isEmpty
                             ShortcutRow(shortcut: shortcut, labels: naming.labels, available: available) {
-                                practice.begin(shortcut, isListening: keyboard.isListening, modifiers: keyboard.modifiers, keys: keyboard.keys)
+                                if keyboard.canIntercept {
+                                    practice.begin(shortcut, isListening: keyboard.canIntercept, modifiers: keyboard.modifiers, keys: keyboard.keys)
+                                } else { keyboard.requestInterceptionPermission() }
                             }
                         }
                     }
@@ -96,7 +98,7 @@ struct ShortcutRow: View {
                 Button(action: onPractice) { row }.buttonStyle(.plain)
             } else { row }
         }
-        .help(available ? "Practicar este atajo; también ejecuta su acción en la app." : (shortcut.resolvedCombinations.isEmpty ? "Este atajo se muestra como referencia; su combinación no admite práctica." : "Para practicar, habilitá Monitoreo de entrada desde el menú ⌘."))
+        .help(available ? "Practicar este atajo sin ejecutar su acción; macOS puede pedir Accesibilidad." : (shortcut.resolvedCombinations.isEmpty ? "Este atajo se muestra como referencia; su combinación no admite práctica." : "Para practicar, habilitá Monitoreo de entrada desde el menú ⌘."))
         .accessibilityLabel(shortcut.action + ", " + labels.text(for: shortcut, fullNames: true))
     }
 }
@@ -156,6 +158,9 @@ struct PracticeGuide: View {
                 .foregroundStyle(session.succeeded ? Color.mint : Color.primary)
             if session.waitingForRelease {
                 Text("Soltá las teclas para empezar").font(.system(size: 10)).foregroundStyle(.secondary)
+            } else {
+                Text(session.succeeded ? "Teclas liberadas" : "Teclas bloqueadas hasta acertar · Esc cancela")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }.frame(maxWidth: .infinity, alignment: .leading).padding(10).fixedSize(horizontal: false, vertical: true)
         .background(session.succeeded ? Color.mint.opacity(0.12) : Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
@@ -224,6 +229,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(withTitle: "Ocultar", action: #selector(hide), keyEquivalent: "")
         menu.addItem(withTitle: "Plegar / desplegar", action: #selector(toggleCollapse), keyEquivalent: "")
         menu.addItem(withTitle: "Habilitar detección de atajos…", action: #selector(enableKeyboardPreview), keyEquivalent: "")
+        menu.addItem(withTitle: "Permitir práctica con teclas bloqueadas…", action: #selector(enableBlockingPractice), keyEquivalent: "")
         let referenceItem = NSMenuItem(title: "Teclado de referencia", action: nil, keyEquivalent: "")
         let referenceMenu = NSMenu()
         for (index, reference) in KeyboardReference.allCases.enumerated() {
@@ -242,7 +248,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateKeyboardMenu()
         keyboard.onStatusChange = { [weak self] in
             guard let self = self else { return }
-            self.practice.validate(content: self.model.content, context: self.model.activeApp, isListening: self.keyboard.isListening)
+            self.practice.validate(content: self.model.content, context: self.model.activeApp, isListening: self.keyboard.canIntercept)
             self.reportState()
         }
         keyboard.onStateChange = { [weak self] in
@@ -250,6 +256,9 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.practice.reconcile(modifiers: self.keyboard.modifiers, keys: self.keyboard.keys)
         }
         keyboard.onKeyDown = { [weak self] press in self?.practice.receive(press) }
+        keyboard.shouldBlock = { [weak self] in self?.practice.isBlocking ?? false }
+        keyboard.onCancelPractice = { [weak self] in self?.practice.cancel() }
+        practice.onChange = { [weak self] in self?.reportState() }
         keyboard.start()
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
             self?.updateActiveApp(notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
@@ -259,13 +268,16 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         timer = Timer(timeInterval: 0.75, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.model.reload() {
-                self.practice.validate(content: self.model.content, context: self.model.activeApp, isListening: self.keyboard.isListening)
+                self.practice.validate(content: self.model.content, context: self.model.activeApp, isListening: self.keyboard.canIntercept)
                 self.reportState()
             }
         }
         RunLoop.main.add(timer!, forMode: .common)
         if CommandLine.arguments.contains("--enable-key-preview") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.keyboard.requestPermission() }
+        }
+        if CommandLine.arguments.contains("--enable-blocking-practice") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.keyboard.requestInterceptionPermission() }
         }
     }
 
@@ -274,7 +286,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let resolved = ApplicationContext.resolved(candidate, ownBundleIdentifier: Bundle.main.bundleIdentifier ?? "local.nacho.atajos-widget", previous: model.activeApp)
         guard resolved != model.activeApp else { return }
         model.activeApp = resolved
-        practice.validate(content: model.content, context: resolved, isListening: keyboard.isListening)
+        practice.validate(content: model.content, context: resolved, isListening: keyboard.canIntercept)
         reportState()
     }
     func updateKeyboardMenu() {
@@ -287,6 +299,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func show() { panel?.orderFrontRegardless(); reportState() }
     @objc func hide() { practice.cancel(); panel.orderOut(nil); reportState() }
     @objc func enableKeyboardPreview() { keyboard.requestPermission() }
+    @objc func enableBlockingPractice() { keyboard.requestInterceptionPermission() }
     @objc func toggleCollapse() {
         practice.cancel()
         model.collapsed.toggle()
@@ -312,7 +325,8 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "visible": panel.isVisible,
             "collapsed": model.collapsed,
             "floating": panel.level == .floating,
-            "keyboard_preview": ["modifiers": true, "input_permission": keyboard.hasInputPermission, "combinations": keyboard.isListening],
+            "keyboard_preview": ["modifiers": true, "input_permission": keyboard.hasInputPermission, "accessibility_permission": keyboard.hasAccessibilityPermission, "combinations": keyboard.isListening, "can_block_shortcuts": keyboard.canIntercept],
+            "practice": ["active": practice.session != nil, "blocking": keyboard.canIntercept && practice.isBlocking, "succeeded": practice.session?.succeeded ?? false],
             "window_id": panel.windowNumber,
             "frame": ["x": panel.frame.origin.x, "y": panel.frame.origin.y, "width": panel.frame.width, "height": panel.frame.height]
         ]

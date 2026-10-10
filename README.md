@@ -1,88 +1,91 @@
 # Atajos
 
-Panel nativo flotante para macOS, instalado en `~/Applications/Atajos.app`.
-Se mueve arrastrando el fondo, se pliega con la flecha y se oculta con la X.
-El menú ⌘ de la barra superior permite volver a mostrarlo o salir.
-La posición y el estado plegado se conservan al reiniciar.
+Native floating macOS panel installed at `~/Applications/Atajos.app`.
+Drag its background to move it, use the chevron to collapse it, and use the X to
+hide it. The menu-bar command icon reopens the panel or quits the app.
+Position and collapsed state survive a restart.
 
-## Atajos según la app
+## App shortcuts
 
-El panel muestra el nombre de la app activa. Sus atajos aparecen primero,
-seguidos de los generales. La lista inicial tiene 12 atajos generales y cuatro
-para cada una de estas apps: Finder, Chrome, Cursor y Ghostty.
-Las demás apps muestran los generales. Interactuar con el panel no cambia el
-foco de la otra app; la detección usa `NSWorkspace` y no requiere Accesibilidad.
+The active app's shortcuts appear before general shortcuts. The initial profiles
+cover Finder, Chrome, Cursor, and Ghostty; other apps show general shortcuts.
+The panel does not take keyboard focus from the active app. App detection uses
+`NSWorkspace` without requiring Accessibility.
 
-## Practicar
+## Practice
 
-Hacer clic en una fila inicia la práctica de ese atajo cuando la detección de
-teclas está habilitada. El panel muestra el objetivo y permite cancelar.
-Una combinación correcta muestra **Correcto** en verde durante dos segundos.
-El atajo también ejecuta su acción habitual en la app: el monitor solo observa.
-La confirmación indica que se detectaron las teclas correctas, sin comprobar
-el resultado de la acción en la otra app.
+Click a shortcut row to start practicing. Practice requires Input Monitoring and
+Accessibility; if Accessibility is missing, clicking a row opens its permission
+request instead. The menu also provides `Permitir práctica con teclas bloqueadas…`.
+Practice never silently falls back to observing shortcuts that execute their actions.
 
-La comparación exige la tecla y los modificadores exactos; admite alternativas
-como izquierda/derecha e ignora repeticiones. Si ya hay teclas presionadas,
-hay que soltarlas antes de empezar. Ocultar o plegar el widget, cambiar a una
-app incompatible, editar/eliminar el objetivo o perder el permiso cancela la práctica.
-Las secuencias de varios pasos se conservan como referencia y no admiten práctica.
+The `PRACTICAR` card appears below `TECLAS PRESIONADAS`. Once previously held keys
+have been released, practice consumes keyboard events so attempts do not reach
+other apps. The first exact match is also consumed and shows `Correcto` for two
+seconds. Normal input resumes immediately after that match. Repeats and releases
+belonging to already consumed keys remain suppressed until those keys are released.
 
-## Ver las teclas que presionás
+Escape or the card's X cancels practice and restores normal input. Escape can
+still be practiced when it is the target combination. Hiding or collapsing the
+panel, changing to an incompatible app, editing/removing the target, losing the
+required permissions, or an event-tap interruption also cancels practice.
 
-La sección **Teclas en vivo** muestra los nombres de Command, Option, Control,
-Shift y Fn/Globo; cada tecla se ilumina mientras está presionada.
-Los nombres se adaptan al teclado de referencia: con la asignación actual del
-Keychron, Fn aparece como **Bloq Mayús** en el visor, la lista y la práctica.
-El submenú **Teclado de referencia** permite elegir Keychron B6 Pro o teclado Mac.
-Las asignaciones de modificadores se leen cada dos segundos; el widget no las cambia.
-El preview muestra las teclas que están presionadas en ese momento, incluyendo
-letras solas, flechas y teclas especiales; se vacía al soltarlas.
-Para recibir letras y flechas de otras apps, se necesita el permiso de
-**Privacidad y seguridad → Monitoreo de entrada → Atajos**.
-El menú ⌘ de la barra superior conserva **Habilitar detección de atajos…**
-para solicitar ese permiso; el panel no muestra un botón de habilitación.
-El monitor observa eventos sin alterar los atajos de otras apps.
+Matching requires the exact key and modifiers, supports alternatives such as
+left/right, and ignores repeats. Multi-step sequences remain reference-only.
+Confirmation verifies the combination, not the action's result in another app.
 
-Las teclas activas se mantienen en memoria, sin historial: no se guardan en archivos ni se
-incluyen en las respuestas MCP. `runtime.json` publica si el permiso y
-la detección están activos, la app actual, el teclado de referencia y el estado del panel.
+## Live keys and permissions
 
-Si macOS solicita salir y reabrir Atajos después de habilitar el permiso,
-volver a abrir `~/Applications/Atajos.app`.
+`Teclas en vivo` shows Command, Option, Control, Shift, and macOS Fn/Globe.
+The preview shows only currently held keys; it keeps no typing history.
+Key names follow the selected keyboard reference. With the Keychron mapping,
+Fn appears as `Bloq Mayús` in the preview, shortcut list, and practice card.
+The menu offers Keychron B6 Pro and Mac references. Mapping preferences are read
+every two seconds; the app does not change system keyboard mappings.
 
-### Fn en teclados Keychron B6 Pro
+Enable **Atajos** under **System Settings → Privacy & Security**:
 
-El visor muestra Fn/Globo de macOS. En el mapa de fábrica del B6 Pro, la Fn
-física activa otra capa dentro del teclado (`MO(1)` en modo Mac); no envía
-por sí sola el modificador Fn de macOS. Las combinaciones transformadas por el
-teclado se muestran según las teclas que efectivamente llegan a macOS.
+- **Input Monitoring** enables letters, arrows, and shortcut detection. The menu's
+  `Habilitar detección de atajos…` requests it.
+- **Accessibility** enables blocking during practice. The menu's
+  `Permitir práctica con teclas bloqueadas…` requests it.
 
-La detección de Fn utiliza el estado global de los modificadores y no descarta
-una señal válida si la consulta del código de tecla 63 devuelve falso.
-Las marcas `function` intrínsecas de eventos de flechas o F1–F12 tampoco se
-interpretan como una pulsación física de Fn.
+Outside practice, events pass through unchanged. The monitor uses an active
+`CGEvent` tap when Accessibility permits it and a passive listener otherwise.
+If macOS requests a restart after granting access, close and reopen Atajos.
 
-## Actualizar mediante MCP
+The build preserves the designated requirement `identifier "local.nacho.atajos-widget"`.
+A permission granted to an older hash-bound build can remain visibly enabled
+while macOS rejects the current app. Recreate only that app's affected permission
+through System Settings or a targeted `tccutil` reset, then grant it again.
+Do not reset unrelated apps' permissions.
 
-El servidor local `atajos-widget` está registrado en `~/.codex/config.toml`.
-Reiniciar el cliente de Codex permite cargar la nueva conexión.
-Después de esta actualización, reiniciar la conexión o el cliente también carga
-el esquema nuevo: los servidores que ya estaban abiertos siguen ejecutando la
-versión anterior hasta reiniciarse. Evitar escrituras con esa versión anterior,
-que descarta los campos nuevos `apps` y `combinations`.
+### Fn on Keychron B6 Pro
 
-- `get_shortcuts`: lee la lista completa, metadatos y el estado del panel.
-- `update_shortcuts`: reemplaza la lista completa; conserva el título si se omite.
-- `show_widget`: abre la app o vuelve a mostrar el panel oculto.
+The factory Fn key activates a firmware layer (`MO(1)` in Mac mode); it does not
+emit macOS Fn on its own. The preview shows the events that actually reach macOS.
+Mapping Caps Lock to Fn/Globe in macOS provides that modifier.
 
-Leer los atajos antes de modificarlos para conservar los que el usuario no pidió cambiar.
-Conservar también `apps` y `combinations` al reenviar filas existentes.
-Las categorías se muestran en el orden de cada grupo (app y generales).
-Los cambios se guardan de forma atómica y el panel los carga cada 750 ms.
-La conexión utiliza stdio local y no requiere paquetes adicionales ni API keys.
+Fn detection accepts the global modifier flag even when querying key code 63
+returns false. Intrinsic function flags on arrow/F-key events are not treated as
+physical Fn presses. During interception, reconciliation uses HID state so dropped
+events do not leave the key preview dependent on application delivery.
 
-Ejemplo de argumentos para `update_shortcuts`:
+## MCP updates
+
+The local `atajos-widget` stdio server is registered in `~/.codex/config.toml`.
+Reconnect the client to load updated server instructions. Existing processes keep
+their previous version until restarted. Versions predating 1.1 discard the `apps`
+and `combinations` fields and must not be used to update contextual shortcuts.
+
+- `get_shortcuts` reads the full list and panel state.
+- `update_shortcuts` replaces the full list, preserving the title if omitted.
+- `show_widget` opens or shows the panel without changing its content.
+
+Read the list before updating it. Preserve existing `apps` and `combinations`.
+Updates are atomic and reload every 750 ms. No extra packages or API keys are needed.
+
+Example `update_shortcuts` arguments:
 
 ```json
 {
@@ -101,68 +104,65 @@ Ejemplo de argumentos para `update_shortcuts`:
 }
 ```
 
-`apps` es opcional: ausente o vacío significa general. Una lista no vacía
-contiene hasta ocho identificadores bundle exactos. `combinations` es opcional
-y contiene hasta ocho alternativas con `modifiers` y `key`. Los modificadores
-son `command`, `option`, `control`, `shift` y `function`; los nombres físicos
-solo afectan la presentación, no estos valores. La tecla puede ser una letra,
-número, símbolo, flecha, F1–F12 o tecla especial como `Tab`, `Enter` o `Espacio`.
-Si se omite, el widget interpreta la notación simple de `keys`, incluidas
-alternativas con ` / `. Con combinaciones explícitas, la presentación se genera
-desde ellas para que el objetivo mostrado coincida con lo que se verifica.
+`apps` is optional: missing or empty means general. Otherwise it contains up to
+eight exact bundle identifiers. `combinations` accepts up to eight alternatives,
+using `command`, `option`, `control`, `shift`, and `function`. Physical names affect
+presentation only. Without explicit combinations, simple `keys` labels are parsed.
 
-`runtime.json` incorpora `active_app` (`bundle_identifier`, `name`),
-`visible_shortcut_count`, `keyboard_reference` y `fn_key_name`.
-`shortcut_count` sigue siendo el total de la lista; no se publican pulsaciones.
+Content lives in `~/Library/Application Support/AtajosWidget/content.json`.
+`runtime.json` includes the active app, counts, keyboard reference, window state,
+Input Monitoring and Accessibility permission state, and `can_block_shortcuts`.
+Its `practice` object publishes only `active`, `blocking`, and `succeeded` booleans.
+Neither files nor MCP responses contain pressed keys or typing history.
 
-Para migrar una lista anterior, `python3 mcp_server.py --migrate` agrega los
-perfiles iniciales, conserva las filas personalizadas y crea un respaldo
-`content.before-context-*.json`. Repetir la migración no duplica los perfiles.
+`python3 mcp_server.py --migrate` adds initial app profiles to older content,
+preserves custom entries, and backs up the original content. Repeating it does
+not duplicate profiles.
 
-Para registrar de nuevo la conexión:
-
-```sh
-codex mcp add atajos-widget -- /usr/bin/python3 /Users/nachogonzalez/source/atajos-widget/mcp_server.py
-```
-
-El contenido está en `~/Library/Application Support/AtajosWidget/content.json`.
-El estado de la app está en `runtime.json` dentro de la misma carpeta.
-
-## Compilar y verificar
+## Build and verification
 
 ```sh
 zsh /Users/nachogonzalez/source/atajos-widget/build.sh
 open /Users/nachogonzalez/Applications/Atajos.app
-python3 /Users/nachogonzalez/source/atajos-widget/test_mcp.py
-python3 -m unittest discover -s /Users/nachogonzalez/source/atajos-widget -p test_content.py -v
-swiftc /Users/nachogonzalez/source/atajos-widget/Shortcuts.swift /Users/nachogonzalez/source/atajos-widget/KeyboardPreview.swift /Users/nachogonzalez/source/atajos-widget/test_keyboard.swift -o /tmp/atajos-keyboard-checks
-/tmp/atajos-keyboard-checks
-swiftc /Users/nachogonzalez/source/atajos-widget/Shortcuts.swift /Users/nachogonzalez/source/atajos-widget/KeyboardPreview.swift /Users/nachogonzalez/source/atajos-widget/test_shortcuts.swift -o /tmp/atajos-shortcut-checks
-/tmp/atajos-shortcut-checks
 ```
 
-La prueba verifica el protocolo MCP, las herramientas, la validación de cambios
-y la recarga real del widget; al terminar restaura el título y los atajos previos.
-Las pruebas de contenido/migración usan un directorio temporal. Las pruebas Swift
-verifican contexto, nombres, comparación, liberación, cancelación y duración del feedback.
-La comprobación de pulsaciones globales reales requiere el permiso de Monitoreo
-de entrada y el teclado físico; las pruebas no solicitan permisos ni envían teclas a otras apps.
+The build stages the delivery binary in the app bundle, replaces it atomically,
+and signs it with the stable designated requirement. A pre-existing staging file
+is rejected so another build's output is not overwritten.
 
-## Fuentes
+Use a focused native smoke check for interception: a wrong attempt and the first
+correct attempt must be absent downstream; input after success and after Escape
+must pass through. Use a controlled foreground app. Release held keys before
+starting. Do not send verification shortcuts to the user's working terminal.
 
-Atajos verificados en [Apple: atajos de teclado](https://support.apple.com/en-us/102650)
-y [Apple: mosaico de ventanas](https://support.apple.com/en-gb/guide/mac-help/mchl9674d0b0/26/mac/26).
-Perfiles: [Chrome](https://support.google.com/chrome/answer/157179?hl=en),
-[Cursor](https://cursor.com/docs/reference/keyboard-shortcuts), su base de
-[VS Code para Mac](https://code.visualstudio.com/shortcuts/keyboard-shortcuts-macos.pdf)
-y [Ghostty](https://ghostty.org/docs/config/keybind). Los atajos de Ghostty se
-comprobaron con `ghostty +list-keybinds --default` en la instalación local.
-Registro de MCP según la [documentación oficial de OpenAI](https://developers.openai.com/codex/mcp).
-La detección usa un [CGEvent tap](https://developer.apple.com/documentation/coregraphics/cgevent/tapcreate(tap:place:options:eventsofinterest:callback:userinfo:))
-con la opción `listenOnly` y [Monitoreo de entrada](https://developer.apple.com/documentation/coregraphics/cgrequestlisteneventaccess()).
-El comportamiento de Fn del B6 Pro está documentado en el
-[manual de Keychron](https://www.keychron.com/pages/keychron-b6-pro-user-manual)
-y en su [mapa de fábrica](https://github.com/Keychron/zmk/blob/keychron_bpro/app/boards/shields/keychron/b6/us/keychron_b6_us.keymap).
+Existing verification commands:
 
-Para quitar la conexión: `codex mcp remove atajos-widget`.
-La app se inicia manualmente; no se instaló un servicio de inicio de sesión.
+```sh
+python3 /Users/nachogonzalez/source/atajos-widget/test_mcp.py
+python3 -m unittest discover -s /Users/nachogonzalez/source/atajos-widget -p test_content.py -v
+```
+
+The MCP check temporarily edits content and restores it. Swift checks in
+`test_keyboard.swift` and `test_shortcuts.swift` cover modifier parsing, context,
+matching, release gating, cancellation, and feedback duration. They do not prove
+global event interception; that requires the app's macOS permissions and a native
+event-delivery check.
+
+## Sources
+
+Shortcuts: [Apple keyboard shortcuts](https://support.apple.com/en-us/102650),
+[window tiling](https://support.apple.com/en-gb/guide/mac-help/mchl9674d0b0/26/mac/26),
+[Chrome](https://support.google.com/chrome/answer/157179?hl=en),
+[Cursor](https://cursor.com/docs/reference/keyboard-shortcuts),
+[VS Code for Mac](https://code.visualstudio.com/shortcuts/keyboard-shortcuts-macos.pdf),
+and [Ghostty](https://ghostty.org/docs/config/keybind).
+
+Input handling: [CGEvent taps](https://developer.apple.com/documentation/coregraphics/cgevent/tapcreate(tap:place:options:eventsofinterest:callback:userinfo:)),
+[Input Monitoring](https://developer.apple.com/documentation/coregraphics/cgrequestlisteneventaccess()),
+and [Accessibility](https://support.apple.com/guide/mac-help/mh43185/mac).
+Keychron: [manual](https://www.keychron.com/pages/keychron-b6-pro-user-manual) and
+[factory keymap](https://github.com/Keychron/zmk/blob/keychron_bpro/app/boards/shields/keychron/b6/us/keychron_b6_us.keymap).
+
+MCP registration follows [the official documentation](https://developers.openai.com/codex/mcp).
+Remove the connection with `codex mcp remove atajos-widget`.
+The app starts manually; no login service is installed.

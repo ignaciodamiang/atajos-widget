@@ -302,8 +302,8 @@ def dispatch(request):
         return {
             "protocolVersion": requested if requested in PROTOCOLS else "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "atajos-widget", "version": "1.1.0"},
-            "instructions": "Gestiona una chuleta de atajos flotante en la Mac del usuario. Conserva los atajos existentes, incluidos apps y combinations, salvo que solicite reemplazarlos. Verifica combinaciones nuevas con la documentación de la app. La práctica compara pulsaciones sin bloquear sus acciones; function representa Fn/Globo de macOS, aunque se muestre Bloq Mayús por el mapa del Keychron.",
+            "serverInfo": {"name": "atajos-widget", "version": "1.2.0"},
+            "instructions": "Gestiona una chuleta de atajos flotante en la Mac del usuario. Conserva los atajos existentes, incluidos apps y combinations, salvo que solicite reemplazarlos. Verifica combinaciones nuevas con la documentación de la app. La práctica bloquea las teclas hasta el primer acierto o la cancelación; requiere Accesibilidad y Monitoreo de entrada. El intento correcto tampoco ejecuta su acción. function representa Fn/Globo de macOS, aunque se muestre Bloq Mayús por el mapa del Keychron.",
         }
     if method == "ping":
         return {}
