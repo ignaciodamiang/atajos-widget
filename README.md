@@ -1,9 +1,13 @@
 # Atajos
 
 Native floating macOS panel installed at `~/Applications/Atajos.app`.
-Drag its background to move it, use the chevron to collapse it, and use the X to
-hide it. The menu-bar command icon reopens the panel or quits the app.
-Position and collapsed state survive a restart.
+Drag its background to move it, use the size button to cycle through compact,
+normal, and full-height modes, and use the X to hide it. Full-height mode spans
+the available height of the panel's current screen, excluding the menu bar and
+Dock. The menu-bar command icon reopens the panel, changes its size, or quits the
+app. The selected mode and normal position survive a restart; leaving full-height
+mode restores the normal placement. Moving between displays or changing the
+screen layout keeps the panel inside the available area.
 
 ## App shortcuts
 
@@ -112,6 +116,8 @@ presentation only. Without explicit combinations, simple `keys` labels are parse
 Content lives in `~/Library/Application Support/AtajosWidget/content.json`.
 `runtime.json` includes the active app, counts, keyboard reference, window state,
 Input Monitoring and Accessibility permission state, and `can_block_shortcuts`.
+`size_mode` is `compact`, `normal`, or `full-height`; `collapsed` remains true only
+in compact mode.
 Its `practice` object publishes only `active`, `blocking`, and `succeeded` booleans.
 Neither files nor MCP responses contain pressed keys or typing history.
 
