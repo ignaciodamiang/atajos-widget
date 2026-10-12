@@ -5,9 +5,10 @@ let stateURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComp
 
 final class Model: ObservableObject {
     @Published var content = Content(title: "Atajos útiles", shortcuts: [])
-    @Published var collapsed = false
+    @Published var sizeMode = WidgetSizeMode.normal
     @Published var activeApp = ApplicationContext.general
     private var lastData: Data?
+    var collapsed: Bool { sizeMode == .compact }
     var visibleShortcuts: [Shortcut] { Shortcut.visible(content.shortcuts, for: activeApp.bundleIdentifier) }
     @discardableResult func reload() -> Bool {
         guard let data = try? Data(contentsOf: stateURL), data != lastData,
@@ -22,9 +23,8 @@ struct Widget: View {
     @ObservedObject var keyboard: KeyboardPreview
     @ObservedObject var naming: KeyboardNaming
     @ObservedObject var practice: ShortcutPractice
-    let onCollapse: () -> Void
+    let onChangeSize: () -> Void
     let onHide: () -> Void
-    let expandedHeight: CGFloat
 
     private var shortcuts: [Shortcut] { model.visibleShortcuts }
     var body: some View {
@@ -33,8 +33,9 @@ struct Widget: View {
                 Image(systemName: "command").foregroundStyle(.mint)
                 Text(model.content.title).font(.system(size: 16, weight: .semibold)).lineLimit(1)
                 Spacer()
-                Button(action: onCollapse) { Image(systemName: model.collapsed ? "chevron.down" : "chevron.up") }
-                    .buttonStyle(.plain).help("Plegar o desplegar")
+                Button(action: onChangeSize) { Image(systemName: model.sizeMode.icon) }
+                    .buttonStyle(.plain).help(model.sizeMode.nextAction)
+                    .accessibilityLabel(model.sizeMode.nextAction)
                 Button(action: onHide) { Image(systemName: "xmark") }
                     .buttonStyle(.plain).help("Ocultar; reabrí desde el ícono ⌘ de la barra superior")
             }
@@ -69,7 +70,7 @@ struct Widget: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(18).frame(width: 330, height: model.collapsed ? 58 : expandedHeight)
+        .padding(18)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
         .preferredColorScheme(.dark)
     }
@@ -181,19 +182,33 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var status: NSStatusItem!
     var timer: Timer?
     var activationObserver: NSObjectProtocol?
+    var screenObserver: NSObjectProtocol?
     var keyboardMenu: NSMenu?
-    var expandedHeight: CGFloat = 620
+    var layout: WidgetLayout!
+    var updatingFrame = false
     var readyToReport = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let runtimeURL = stateURL.deletingLastPathComponent().appendingPathComponent("runtime.json")
         let previous = (try? Data(contentsOf: runtimeURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        model.collapsed = (UserDefaults.standard.object(forKey: "Collapsed") as? Bool) ?? (previous["collapsed"] as? Bool) ?? false
+        let collapsed = (UserDefaults.standard.object(forKey: "Collapsed") as? Bool) ?? (previous["collapsed"] as? Bool) ?? false
+        let savedMode = UserDefaults.standard.string(forKey: "SizeMode") ?? (previous["size_mode"] as? String)
+        model.sizeMode = savedMode.flatMap(WidgetSizeMode.init(rawValue:)) ?? (collapsed ? .compact : .normal)
         model.reload()
         updateActiveApp(NSWorkspace.shared.frontmostApplication)
-        expandedHeight = min(620, (NSScreen.main?.visibleFrame.height ?? 700) - 48)
-        let height: CGFloat = model.collapsed ? 58 : expandedHeight
-        panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 330, height: height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { NSApp.terminate(nil); return }
+        var normalFrame = WidgetLayout.defaultFrame(in: screen.visibleFrame)
+        if let saved = UserDefaults.standard.string(forKey: "NormalFrame") {
+            let frame = NSRectFromString(saved)
+            if frame.minX.isFinite, frame.minY.isFinite, frame.height.isFinite, frame.height >= WidgetLayout.compactHeight {
+                normalFrame = frame
+                normalFrame.size.width = WidgetLayout.width
+            }
+        } else if let frame = previous["frame"] as? [String: Double], let x = frame["x"], let y = frame["y"], let height = frame["height"] {
+            normalFrame.origin = NSPoint(x: x, y: y + height - normalFrame.height)
+        }
+        layout = WidgetLayout(normalFrame: normalFrame)
+        panel = FloatingPanel(contentRect: normalFrame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "Atajos"
         panel.delegate = self
         panel.isReleasedWhenClosed = false
@@ -203,23 +218,10 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         let hosting = NSHostingView(rootView: Widget(model: model, keyboard: keyboard, naming: naming, practice: practice,
-                                                    onCollapse: { [weak self] in self?.toggleCollapse() }, onHide: { [weak self] in self?.hide() }, expandedHeight: expandedHeight))
+                                                    onChangeSize: { [weak self] in self?.cycleSize() }, onHide: { [weak self] in self?.hide() }))
         hosting.sizingOptions = []
         panel.contentView = hosting
-        if let screen = NSScreen.main {
-            let frame = screen.visibleFrame
-            panel.setFrameOrigin(NSPoint(x: frame.maxX - 354, y: frame.maxY - height - 24))
-        }
-        panel.setFrameAutosaveName("AtajosWidgetPosition")
-        var savedFrame = panel.frame
-        if CommandLine.arguments.contains("--restore-window-state"), let frame = previous["frame"] as? [String: Double],
-           let x = frame["x"], let y = frame["y"], let savedHeight = frame["height"] {
-            savedFrame = NSRect(x: x, y: y, width: 330, height: savedHeight)
-        }
-        savedFrame.origin.y += savedFrame.height - height
-        savedFrame.size = NSSize(width: 330, height: height)
-        panel.setFrame(savedFrame, display: true)
-        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(panel.frame) }) { panel.center() }
+        updatePanelFrame()
         if !CommandLine.arguments.contains("--restore-window-state") || (previous["visible"] as? Bool) != false { panel.orderFrontRegardless() }
 
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -227,7 +229,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Mostrar atajos", action: #selector(show), keyEquivalent: "")
         menu.addItem(withTitle: "Ocultar", action: #selector(hide), keyEquivalent: "")
-        menu.addItem(withTitle: "Plegar / desplegar", action: #selector(toggleCollapse), keyEquivalent: "")
+        menu.addItem(withTitle: "Cambiar tamaño", action: #selector(cycleSize), keyEquivalent: "")
         menu.addItem(withTitle: "Habilitar detección de atajos…", action: #selector(enableKeyboardPreview), keyEquivalent: "")
         menu.addItem(withTitle: "Permitir práctica con teclas bloqueadas…", action: #selector(enableBlockingPractice), keyEquivalent: "")
         let referenceItem = NSMenuItem(title: "Teclado de referencia", action: nil, keyEquivalent: "")
@@ -262,6 +264,9 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         keyboard.start()
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
             self?.updateActiveApp(notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+        }
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.updatePanelFrame(); self?.reportState()
         }
         readyToReport = true
         reportState()
@@ -300,20 +305,39 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func hide() { practice.cancel(); panel.orderOut(nil); reportState() }
     @objc func enableKeyboardPreview() { keyboard.requestPermission() }
     @objc func enableBlockingPractice() { keyboard.requestInterceptionPermission() }
-    @objc func toggleCollapse() {
+    @objc func cycleSize() {
         practice.cancel()
-        model.collapsed.toggle()
-        var frame = panel.frame
-        let height: CGFloat = model.collapsed ? 58 : expandedHeight
-        frame.origin.y += frame.height - height
-        frame.size.height = height
-        panel.setFrame(frame, display: true)
+        layout.rememberPosition(of: panel.frame, mode: model.sizeMode)
+        model.sizeMode = model.sizeMode.next
+        updatePanelFrame()
         reportState()
     }
-    func windowDidMove(_ notification: Notification) { reportState() }
+    func updatePanelFrame(whileMoving: Bool = false) {
+        guard let panel = panel, let screen = panel.screen ?? NSScreen.main else { return }
+        layout.normalFrame = layout.fittedNormalFrame(in: screen.visibleFrame)
+        var frame = layout.frame(for: model.sizeMode, in: screen.visibleFrame)
+        if whileMoving && model.sizeMode == .fullHeight { frame.origin.x = panel.frame.minX }
+        guard panel.frame != frame else { return }
+        updatingFrame = true
+        defer { updatingFrame = false }
+        panel.setFrame(frame, display: true)
+    }
+    func windowDidMove(_ notification: Notification) {
+        guard readyToReport, !updatingFrame else { return }
+        layout.rememberPosition(of: panel.frame, mode: model.sizeMode)
+        if model.sizeMode == .fullHeight { updatePanelFrame(whileMoving: true) }
+        reportState()
+    }
+    func windowDidChangeScreen(_ notification: Notification) {
+        guard readyToReport, !updatingFrame else { return }
+        updatePanelFrame()
+        reportState()
+    }
     func reportState() {
         guard readyToReport, let panel = panel else { return }
         UserDefaults.standard.set(model.collapsed, forKey: "Collapsed")
+        UserDefaults.standard.set(model.sizeMode.rawValue, forKey: "SizeMode")
+        UserDefaults.standard.set(NSStringFromRect(layout.normalFrame), forKey: "NormalFrame")
         let state: [String: Any] = [
             "pid": ProcessInfo.processInfo.processIdentifier,
             "title": model.content.title,
@@ -324,6 +348,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "fn_key_name": naming.labels.functionName,
             "visible": panel.isVisible,
             "collapsed": model.collapsed,
+            "size_mode": model.sizeMode.rawValue,
             "floating": panel.level == .floating,
             "keyboard_preview": ["modifiers": true, "input_permission": keyboard.hasInputPermission, "accessibility_permission": keyboard.hasAccessibilityPermission, "combinations": keyboard.isListening, "can_block_shortcuts": keyboard.canIntercept],
             "practice": ["active": practice.session != nil, "blocking": keyboard.canIntercept && practice.isBlocking, "succeeded": practice.session?.succeeded ?? false],
@@ -338,6 +363,7 @@ final class Delegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         practice.cancel(); timer?.invalidate(); keyboard.stop(); naming.stop()
         if let observer = activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        if let observer = screenObserver { NotificationCenter.default.removeObserver(observer) }
     }
 }
 
