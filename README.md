@@ -1,4 +1,4 @@
-# Atajos
+# Atajos — macOS keyboard shortcut overlay and trainer
 
 Atajos is a native floating macOS panel for a curated list of keyboard shortcuts,
 with a local stdio MCP server for reading and updating that list. It shows
@@ -155,6 +155,14 @@ Neither files nor MCP responses contain pressed keys or typing history.
 `python3 mcp_server.py --migrate` adds initial app profiles to older content,
 preserves custom entries, and backs up the original content. Repeating it does
 not duplicate profiles.
+
+## Contributing
+
+Bug reports and focused changes are welcome. Open an issue with the macOS version,
+affected app, and expected behavior. Send code changes against `develop` and
+describe how you checked them on macOS, especially when changing keyboard event
+handling or permissions. Keep personal shortcut lists and captured input out of
+issues and pull requests.
 
 ## Development verification
 
