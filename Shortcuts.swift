@@ -220,7 +220,7 @@ final class KeyboardNaming: ObservableObject {
     private var timer: Timer?
 
     init() {
-        reference = KeyboardReference(rawValue: UserDefaults.standard.string(forKey: "KeyboardReference") ?? "") ?? .keychron
+        reference = KeyboardReference(rawValue: UserDefaults.standard.string(forKey: "KeyboardReference") ?? "") ?? .mac
     }
     func start() {
         reload()
