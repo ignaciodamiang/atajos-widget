@@ -1,6 +1,32 @@
 # Atajos
 
-Native floating macOS panel installed at `~/Applications/Atajos.app`.
+Atajos is a native floating macOS panel for a curated list of keyboard shortcuts,
+with a local stdio MCP server for reading and updating that list. It shows
+shortcuts for the active app alongside general shortcuts, previews held keys, and
+lets you practice a combination without sending it to another app. The list is
+maintained in local JSON; Atajos does not automatically discover every shortcut
+in an installed app.
+
+The source is available under the [MIT license](LICENSE).
+
+## Build from source
+
+You need macOS, Xcode Command Line Tools (`swiftc` and `codesign`), and Python 3.
+Clone the repository, then run these commands from its directory:
+
+```sh
+bash build.sh
+open "$HOME/Applications/Atajos.app"
+```
+
+The build creates `~/Applications/Atajos.app`, signs it locally, and seeds
+`~/Library/Application Support/AtajosWidget/content.json` only if it does not
+already exist. It preserves existing shortcut content. There is no packaged or
+notarized download in this repository. macOS compatibility has not been checked
+across releases.
+
+## Panel
+
 Drag its background to move it, use the size button to cycle through compact,
 normal, and full-height modes, and use the X to hide it. Full-height mode spans
 the available height of the panel's current screen, excluding the menu bar and
@@ -13,6 +39,8 @@ screen layout keeps the panel inside the available area.
 
 The active app's shortcuts appear before general shortcuts. The initial profiles
 cover Finder, Chrome, Cursor, and Ghostty; other apps show general shortcuts.
+These profiles are examples rather than a scan of each app's live menu. You can
+replace or extend them through the local MCP server.
 The panel does not take keyboard focus from the active app. App detection uses
 `NSWorkspace` without requiring Accessibility.
 
@@ -44,7 +72,7 @@ Confirmation verifies the combination, not the action's result in another app.
 The preview shows only currently held keys; it keeps no typing history.
 Key names follow the selected keyboard reference. With the Keychron mapping,
 Fn appears as `Bloq Mayús` in the preview, shortcut list, and practice card.
-The menu offers Keychron B6 Pro and Mac references. Mapping preferences are read
+The menu offers Mac (the initial reference) and Keychron B6 Pro. Mapping preferences are read
 every two seconds; the app does not change system keyboard mappings.
 
 Enable **Atajos** under **System Settings → Privacy & Security**:
@@ -77,17 +105,20 @@ events do not leave the key preview dependent on application delivery.
 
 ## MCP updates
 
-The local `atajos-widget` stdio server is registered in `~/.codex/config.toml`.
-Reconnect the client to load updated server instructions. Existing processes keep
-their previous version until restarted. Versions predating 1.1 discard the `apps`
-and `combinations` fields and must not be used to update contextual shortcuts.
+Configure an MCP client to start `python3` with the absolute path to
+`mcp_server.py` as its argument. The server uses stdio, runs locally, and needs
+no extra packages or API keys. Client registration varies; see your client's MCP
+documentation. Reconnect the client after changing the server source. Existing
+processes keep their previous version until restarted. Servers predating 1.1
+discard the `apps` and `combinations` fields and must not be used to update
+contextual shortcuts.
 
 - `get_shortcuts` reads the full list and panel state.
 - `update_shortcuts` replaces the full list, preserving the title if omitted.
 - `show_widget` opens or shows the panel without changing its content.
 
 Read the list before updating it. Preserve existing `apps` and `combinations`.
-Updates are atomic and reload every 750 ms. No extra packages or API keys are needed.
+Updates are atomic and reload every 750 ms.
 
 Example `update_shortcuts` arguments:
 
@@ -125,14 +156,9 @@ Neither files nor MCP responses contain pressed keys or typing history.
 preserves custom entries, and backs up the original content. Repeating it does
 not duplicate profiles.
 
-## Build and verification
+## Development verification
 
-```sh
-zsh /Users/nachogonzalez/source/atajos-widget/build.sh
-open /Users/nachogonzalez/Applications/Atajos.app
-```
-
-The build stages the delivery binary in the app bundle, replaces it atomically,
+The build stages the binary in the app bundle, replaces it atomically,
 and signs it with the stable designated requirement. A pre-existing staging file
 is rejected so another build's output is not overwritten.
 
@@ -144,8 +170,8 @@ starting. Do not send verification shortcuts to the user's working terminal.
 Existing verification commands:
 
 ```sh
-python3 /Users/nachogonzalez/source/atajos-widget/test_mcp.py
-python3 -m unittest discover -s /Users/nachogonzalez/source/atajos-widget -p test_content.py -v
+python3 test_mcp.py
+python3 -m unittest discover -s . -p test_content.py -v
 ```
 
 The MCP check temporarily edits content and restores it. Swift checks in
@@ -169,6 +195,6 @@ and [Accessibility](https://support.apple.com/guide/mac-help/mh43185/mac).
 Keychron: [manual](https://www.keychron.com/pages/keychron-b6-pro-user-manual) and
 [factory keymap](https://github.com/Keychron/zmk/blob/keychron_bpro/app/boards/shields/keychron/b6/us/keychron_b6_us.keymap).
 
-MCP registration follows [the official documentation](https://developers.openai.com/codex/mcp).
-Remove the connection with `codex mcp remove atajos-widget`.
+For Codex, [the MCP setup guide](https://developers.openai.com/codex/mcp)
+explains how to register or remove a local stdio server.
 The app starts manually; no login service is installed.
